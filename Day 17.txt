@@ -1,0 +1,99 @@
+Module: DevOps on AWS
+-------------------------------------------------
+Git & GitHub	-----------> Store the code <----------- Code Commit 
+Maven		-----------> Build the project <----------- Code Build
+Jenkins		-----------> CI & CD <----------- Code Pipeline
+Terraform	-----------> Automation of resource creation <----------- Cloud Formation 
+	.tf file ---> Info related to the resource creation
+	templates ---> Info related to the resource creation  		
+
+AWS Code Commit, AWS Code Build, AWS Code Pipeline, AWS Cloud Formation ---> Code Suite Services
+These services are specifically meant for AWS Cloud ONLY
+
+ECR		- Elastic Container Registry
+ECS		- Elastic Container Service
+
+Docker ----> 
+Dockerfile (Docker commands/instructions) ----> Docker Images (Info related to the application deployment) ----> Docker Containers (Host our applications)
+
+Tomcat -----> Docker Container
+
+Docker images can be stored in 1) Dockerhub (Public repo)	2) ECR (Private)
+ECS Cluster
+
+Project Repo: https://github.com/KastroVKiran/ECR-ECS-Project.git
+
+-----------------------------------------------------------------
+CI CD AWS DevOps Project with GitHub
+-----------------------------------------------------------------
+1. Launch Amazon Linux 2 instance, t2.micro
+2. Connect to the VM
+	- sudo su
+	- yum install docker -y
+	- systemctl start docker
+	- systemctl status docker
+	- docker images
+	- docker ps -a
+3. We need to clone the project from GitHub
+	- yum install git -y
+	- git clone https://github.com/KastroVKiran/ECR-ECS-Project.git
+	- cd <FolderName>
+	- Check the contents of dockerfile
+4. Build the image
+	- docker build -t website:latest .
+	- docker images
+	- docker run -itd -p 80:80 website
+	- Access the app using Port 80.
+	- But in this project, my intention is not to show the app using docker container directly
+	- Currently the docker image is available in my instance. We can push it docker hub. But lets i want the image to be pushed to ECR. Lets do 			that.
+5. AWS Console ----> ECR ----> Create ----> Name: website, Image tag mutability: Mutable, Encryption: AES-256 ----> Create. You can see the ECR repo now. For every ECR, we will get URI. We will use this URI while working with ECS ----> Open the ECR create. You dont see any images.
+Now i want to push the image which is in instance to ECR. But currently, the VM doesn't have the permission to push image to ECR. So we need to create IAM Role and then attach to the VM
+
+5.2. AWS Console ----> IAM ----> Create role ----> Trusted entity type: AWS Service, Usecase: EC2 ----> Next ----> Attach the below policy: AmazonEC2ContainerRegistryFullAccess ----> Next ----> Role name: ECR-Role ----> Create role
+
+5.3. Attach the above role to VM
+
+5.4. Lets push the image to ECR ----> Goto ECR ----> 'Check' the ECR created ----> Click on 'View push commands' ----> Copy the first command i.e Retrieve an authentication token and authenticate your docker client to your registry' ----> Goto Moba and execute the command. You will see 'Login Succeeded' 
+If you dont see 'Login Succeeded' there is a problem with the IAM Role or check whether its attached properly or not. ----> Copy the 2nd command from ECR and execute in Moba ----> Copy the 3rd command from ECR and execute in Moba ----> docker images ----> You will see the latest image ----> Copy the 4th command from ECR and execute in Moba ----> Goto ECR and check for the image
+
+6. Lets work with ECS
+Create ECS Cluster ----> AWS Console ----> ECS ----> Create cluster ----> Name: Website-Cluster, Infrastructure: 'Check' AWS Fargate [Note: IF you select EC2 instead of Fargate, ECS will launch an Instance in which containers will get created. Since we have already worked with EC2, Im showing Fargate here which is serverless and AWS will manage it completely] ----> Create ----> After 5 minutes, you will see the cluster. This cluster will get created based on Cloud Formation.
+
+6.2. Open the cluster created ----> Lets create 'Task' first. Task consists of info regarding the container running. This info we will configure in 'Task definition'. Lets create a task definition ----> 'Task definition (left pane) ----> Create ----> Family: Website-task-definition, Launch type: 'Check' Fargate, OS/Architecture: Linux/x86__64, CPU: 0.25 vCPU, Memory: 0.5 Gb, Task role:*** Select 'ec2TaskExecutionRole' from dropdown, Task execution role: Select 'ec2TaskExecutionRole' from dropdown ----> Container 1: Name: website, Image URI: To get Image URI, goto ECR, open the image and copy the URI, Essential container: Yes, Private registry: Disable the toogle bar, Container port: 80, Protocol: TCP, Port name: <Leave blank>, App protocol: HTTP ----> Create. With this task definition is created.
+
+6.3. Now lets create task (Task is like number of instances) ----> ECS ----> Open the cluster created ----> 'Tasks' tab ----> Run new task ----> Compute options: Launch type, launch type: Fargate, Platform version: Latest, Application type: Task (Since currently we are creating a task now), Task definition family: Select the one from dropdown (We have created this in the above step), 'Check' Specify revision manually, Revision: 14 (This states that we can modify the task definition 14 times), Desired tasks: 2 (it means number of containers. We can give 1 also), Task group: <LeaveBlank> ----> Create
+
+Open the ECS ----> Go inside 'task' tab. You will see 2 tasks. Wait till the tasks are in 'running' status. Click on any one of the tasks ----> Copy the public ip  ----> You will see the app 
+
+Generally, we dont give IP to users, so we need to create Service..
+
+6.4. ECS ----> Open the ECS created ----> 'Services' tab ----> Create [Service is created to expose the app to outside. We will expose it using Load Balancer. But here ECS cannot directly create a load balancer, we need to manually create it and also target group] ----> EC2 ----> Target Group (left pane) ----> Create ----> Target type: IP addresses, Name: website-tg, Protocol: HTTP, IPv4, VPC: default, Health check protocol: HTTP, Health check path: / ----> Next ----> Network: Default, You will also see the IP of Subnet, Dont click on "Include pending below" ----> Create target group
+
+Load balancer (left pane) ----> Create ----> Select ALB ----> Name: Website-ALB, Scheme: Internet facing, IPv4, 'Check' 1a and 1b AZs ----> Listeners and Routing: HTTP, 80, Select the TG created ----> Create LB
+
+Now we can create Service in ECS ----> ECS ----> Open the ECS created ----> 'Services' tab ----> Create ----> Compute options: Launch type, Launch type: Fargate, Platform version: Latest, Application type: Service, Task definition family: Select from dropdown, Task definition revision: 14, Service name: website-service, Service type: Replica, Desired tasks: 2, 'Check' Turnon AZ rebalancing, Deployment options: Deployment type: Rolling update ----> Load balancing: 'Check' use load balancing, LB type: ALB, Container: website 80:80, 'Check' use existing load balancer, LB: Select the one created in above step, Listener: use an existing listener, Listener: 80:HTTP, Target group: Use an existing target group, Health check path: /, Health check protocol: HTTP ----> Service autoscaling ----> 'Check' use service autoscaling, Min. no. of tasks: 2, Max: 4, Scaling policy: Target tracking, Policy name: website-policy-demo, ECS service metric: ECSServiceAverageCPUUtilization, Target value: 70 ----> Create. It will take 5-10 minutes to create the service
+
+EC2 Console ----> Load balancer (left pane) ----> Copy the LB DNS and access the app (Make sure to open port number 80). If it doesn't work, remove 's' in https in the URL and check again
+
+
+Note: Fargate is billable
+
+7. Lets setup CI&CD for this ECS
+We will use Code Build, Code Pipeline, Code Deploy services in AWS
+
+7.1. Code build will build the image and push it to ECR
+Code build ----> Connections (leftpane) ----> Create connection ----> Provider: Github, Connection name: github-connection ----> Connect to GitHub ----> Connect ----> Install a new app ----> Connect ----> Configure GitHub
+
+Lets create a code build ----> Code Build ----> Create project ----> Name: website, Project type: Default project, Source: GitHub, Repo: 'Check' Repo  in my GitHub account, Repo: Select the GitHub repo ----> Primary source webhook events: 'Check' rebuild everytime a code change is published to this repo, Build type: Single build, Webhook event filter groups: Event type: PUSH ----> Environment: Provisioning model: On-demand, Envi. image: Managed image, Compute: EC2, Running mode: Container, OS: Amazon Linux, Service role: 'Check' New service role, Role name: codebuild-ecr-role-Kastro ----> Build spec: Use a build spec file, [Note: buildspec file is in GitHub repo. Make the necessary change to the buildspec yml file]  Buildspec name: buildspec.yml [Make sure this name must be same as of in GitHub repo] ----> Create build project ----> Click on start build. Now it will build and create the image and will push the image to ECR. How these steps are happening? Because we have configured these steps in buildspec.yml file
+
+To see the build execution process ----> Open the code build created ----> 'Phase details' tab ----> You can see the stage by stage execution.
+
+Note: If code build fails, give 'Administrator Permissions' (or, AmazonEC2ContainerRegistryPowerUser) for the IAM role which is attached to Code Build Project and then rebuild the project again.
+
+7.2. Lets create a code pipeline
+Code Pipeline ----> Create ----> Category: Build custom pipeline ----> Next ----> Name: Website-CI-CD, Execution mode: Queued, New service role ----> Next ----> Source provider: GitHub via GitHub app, Connection: Select the one from dropdown, Repo name: Select the repo, Branch: main, 'Check' Code pipeline default, Click on 'Webhook event filters ----> Event type: Push, Filter type: Branch, Branches: main ----> Next ----> 'Check' other build providers, Select AWS Code Build, Project name: Select from dropdown, Build type: Single build, Region: Select the region ----> Next ----> Skip test stage ----> Next ----> 	Code deploy: Deploy provider: Amazon ECS, Region: Select the region, Cluster name: Select the name from dropdown, Service name: Select the name from dropdown, Image definitions file: imagedefinitions.json [This name is there in buildspec.yml file] ----> Next ----> Create pipeline ----> You can see the stage by stage execution. And final deployment happens in ECS
+Wait for sometime for the deployment to happen.
+
+Copy the load balancer DNS and access the app.
+
+Make changes to the code and the pipeline will trigger automatically. 
